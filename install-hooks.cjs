@@ -14,10 +14,21 @@ function hook(command) {
 }
 
 function isOwnedHook(entry, packageDirectory = __dirname) {
-  const normalize = (value) => String(value).replaceAll("/", "\\").toLowerCase();
-  const target = normalize(path.win32.join(packageDirectory, "hook-handler.cjs"));
-  const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[\\s"'])${escaped}(?=$|[\\s"'])`).test(normalize(entry?.command || ""));
+  // Recognize the exact command shape we generate, not a command that merely
+  // mentions the handler (for example an echo or another script's argument).
+  const invocation = /^\s*"([^"]+)"\s+"([^"]+)"\s*$/.exec(String(entry?.command || ""));
+  if (!invocation || !/^(node|node\.exe)$/i.test(path.win32.basename(invocation[1]))) return false;
+  const canonical = (filePath) => {
+    try {
+      // Windows 8.3 paths and directory junctions can name the same installed
+      // handler differently between installation and uninstallation.
+      filePath = fs.realpathSync.native(filePath);
+    } catch {
+      // Missing files and synthetic fixtures still support lexical matching.
+    }
+    return path.win32.normalize(String(filePath).replaceAll("/", "\\")).toLowerCase();
+  };
+  return canonical(invocation[2]) === canonical(path.join(packageDirectory, "hook-handler.cjs"));
 }
 
 function removeOwnedHooks(document, options = {}) {

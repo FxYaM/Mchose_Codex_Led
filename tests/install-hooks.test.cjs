@@ -25,7 +25,7 @@ test("reinstall preserves unrelated entries and matcher in a mixed hook group", 
 });
 
 test("uninstall removes only this installation's hooks and retains other groups", () => {
-  const otherInstall = { type: "command", command: '"C:\\another\\mchose-led\\hook-handler.cjs"' };
+  const otherInstall = { type: "command", command: '"C:\\node.exe" "C:\\another\\mchose-led\\hook-handler.cjs"' };
   const original = { hooks: {
     Stop: [{ hooks: [owned, other] }, { hooks: [otherInstall] }],
     SessionEnd: [{ hooks: [owned] }],
@@ -43,6 +43,46 @@ test("ownership normalizes Windows case and slash variants and rejects prefix ma
   assert.equal(isOwnedHook({ command: `${owned.command.slice(0, -1)}.backup"` }, packageDirectory), false);
   assert.equal(isOwnedHook(other, packageDirectory), false);
   assert.equal(isOwnedHook(null, packageDirectory), false);
+});
+
+test("commands that merely mention the handler are not owned hooks", () => {
+  const handler = `${packageDirectory}\\hook-handler.cjs`;
+  for (const command of [
+    `echo "${handler}"`,
+    `"C:\\echo.exe" "${handler}"`,
+    `"C:\\node.exe" "notify.cjs" "${handler}"`,
+    `${owned.command} && notify-other.exe`,
+    `${owned.command} --custom-action`,
+  ]) {
+    assert.equal(isOwnedHook({ type: "command", command }, packageDirectory), false, command);
+  }
+});
+
+test("uninstall recognizes an existing handler through a different directory alias", () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "mchose-hooks-test-"));
+  try {
+    const installedDirectory = path.join(temporary, "long installation directory");
+    const aliasDirectory = path.join(temporary, "INSTALL~1");
+    fs.mkdirSync(installedDirectory);
+    fs.writeFileSync(path.join(installedDirectory, "hook-handler.cjs"), "synthetic handler, never executed");
+    fs.symlinkSync(installedDirectory, aliasDirectory, process.platform === "win32" ? "junction" : "dir");
+    const aliasHook = {
+      type: "command", command: `"${process.execPath}" "${path.join(aliasDirectory, "hook-handler.cjs")}"`,
+    };
+    assert.equal(isOwnedHook(aliasHook, installedDirectory), true);
+    assert.deepEqual(removeOwnedHooks({ hooks: { Stop: [{ hooks: [aliasHook, other] }] } }, {
+      packageDirectory: installedDirectory,
+    }).hooks.Stop, [{ hooks: [other] }]);
+    assert.equal(isOwnedHook({
+      type: "command", command: `"${process.execPath}" "${path.join(installedDirectory, "hook-handler.cjs")}"`,
+    }, aliasDirectory), true);
+  } finally {
+    const resolved = path.resolve(temporary);
+    if (!resolved.startsWith(`${path.resolve(os.tmpdir())}${path.sep}`) || !path.basename(resolved).startsWith("mchose-hooks-test-")) {
+      throw new Error(`Refusing unsafe test cleanup: ${resolved}`);
+    }
+    fs.rmSync(resolved, { recursive: true, force: true });
+  }
 });
 
 test("the remove CLI backs up and updates only an isolated hooks document", () => {

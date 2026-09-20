@@ -2,8 +2,8 @@
 
 ## 1.6.1 — 2026-09-20
 
-- Normalize Windows startup script paths before uninstall ownership checks, including short (8.3) path aliases and casing, while rejecting unrelated startup commands.
-- Add regression coverage for equivalent and unrelated startup paths; update pinned CI actions to their Node.js 24 versions.
+- Resolve Windows startup and hook script paths before uninstall ownership checks, including short (8.3) path aliases and casing, while rejecting unrelated commands that merely mention a script.
+- Add regression coverage for equivalent and unrelated paths, including short-path installation followed by long-path uninstallation; update pinned CI actions to their Node.js 24 versions.
 
 ## 1.6.0 — 2026-09-20
 

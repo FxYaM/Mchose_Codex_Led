@@ -287,6 +287,38 @@ test("uninstall recognizes an 8.3 startup alias for the same launcher when alias
   assert.deepEqual(JSON.parse(fs.readFileSync(f.registryPath)), f.registry);
 });
 
+test("short USERPROFILE installation can be completely uninstalled through the long profile path", windowsOnly, (t) => {
+  const f = fixture(t);
+  const longProfile = fs.realpathSync.native(f.profile);
+  const probe = path.join(f.source, "probe-short-profile.ps1");
+  write(probe, "$fileSystem = New-Object -ComObject Scripting.FileSystemObject\n$fileSystem.GetFolder($env:FIXTURE_PROFILE).ShortPath\n");
+  const result = f.run(probe, { FIXTURE_PROFILE: longProfile });
+  passed(result);
+  const shortProfile = result.stdout.trim();
+  assert.ok(shortProfile);
+  if (shortProfile.toLowerCase() === longProfile.toLowerCase()) {
+    t.skip("8.3 profile aliases are disabled on this filesystem");
+    return;
+  }
+
+  // Exercise both actual scripts with different aliases, including the hook
+  // commands they generate; changing only the registry value misses this bug.
+  passed(f.install({ USERPROFILE: shortProfile }));
+  const installedHooks = JSON.parse(fs.readFileSync(f.hooksPath));
+  const installedCommands = Object.values(installedHooks.hooks)
+    .flatMap((groups) => groups.flatMap((group) => group.hooks || []))
+    .map((hook) => hook.command || "");
+  assert.equal(installedCommands.filter((command) => command.includes("hook-handler.cjs")).length, 7);
+
+  passed(f.uninstall({ USERPROFILE: longProfile }));
+  const remainingHooks = JSON.parse(fs.readFileSync(f.hooksPath));
+  assert.equal(JSON.stringify(remainingHooks).includes("hook-handler.cjs"), false, "no owned hook may reference deleted program files");
+  assert.deepEqual(remainingHooks.hooks.Stop, f.hooks.hooks.Stop);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.registryPath)), f.registry);
+  assert.equal(fs.existsSync(f.installed), false);
+  assert.equal(fs.readFileSync(path.join(f.runtime, "snapshots", "recovery-sentinel.bin"), "utf8"), "must survive uninstall");
+});
+
 test("uninstall rejects unrelated startup commands before changing hooks or registrations", windowsOnly, (t) => {
   const f = fixture(t);
   passed(f.install());
