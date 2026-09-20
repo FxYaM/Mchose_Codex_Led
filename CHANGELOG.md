@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1 — 2026-09-20
+
+- Normalize Windows startup script paths before uninstall ownership checks, including short (8.3) path aliases and casing, while rejecting unrelated startup commands.
+- Add regression coverage for equivalent and unrelated startup paths; update pinned CI actions to their Node.js 24 versions.
+
 ## 1.6.0 — 2026-09-20
 
 - Refuse device tests while an earlier recovery is pending, preserving the original restoration source.

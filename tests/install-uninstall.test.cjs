@@ -249,3 +249,64 @@ test("uninstall refuses recovery data inside the install tree even when hidden b
   assert.equal(fs.readFileSync(path.join(inside, "snapshot.bin"), "utf8"), "keep recovery data");
   assert.equal(fs.existsSync(path.join(f.installed, "ledctl.cjs")), true);
 });
+
+test("uninstall accepts equivalent startup paths with different casing and normalized segments", windowsOnly, (t) => {
+  const f = fixture(t);
+  passed(f.install());
+  const registry = JSON.parse(fs.readFileSync(f.registryPath));
+  const launcher = path.join(f.installed, "mchose-led.ps1");
+  const equivalent = f.installed.toUpperCase() + "\\lib\\..\\MCHOSE-LED.PS1";
+  registry.MCHOSECodexLED = registry.MCHOSECodexLED.replace(`"${launcher}"`, `"${equivalent}"`);
+  assert.ok(registry.MCHOSECodexLED.includes(equivalent));
+  write(f.registryPath, JSON.stringify(registry));
+  passed(f.uninstall());
+  assert.equal(fs.existsSync(f.installed), false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.registryPath)), f.registry);
+});
+
+test("uninstall recognizes an 8.3 startup alias for the same launcher when aliases are enabled", windowsOnly, (t) => {
+  const f = fixture(t);
+  passed(f.install());
+  const launcher = path.join(f.installed, "mchose-led.ps1");
+  const probe = path.join(f.source, "probe-short-path.ps1");
+  write(probe, "$fileSystem = New-Object -ComObject Scripting.FileSystemObject\n$fileSystem.GetFile($env:FIXTURE_LAUNCHER).ShortPath\n");
+  const result = f.run(probe, { FIXTURE_LAUNCHER: launcher });
+  passed(result);
+  const shortLauncher = result.stdout.trim();
+  assert.ok(shortLauncher);
+  if (shortLauncher.toLowerCase() === launcher.toLowerCase()) {
+    t.skip("8.3 aliases are disabled on this filesystem");
+    return;
+  }
+  const registry = JSON.parse(fs.readFileSync(f.registryPath));
+  registry.MCHOSECodexLED = registry.MCHOSECodexLED.replace(`"${launcher}"`, `"${shortLauncher}"`);
+  assert.ok(registry.MCHOSECodexLED.includes(shortLauncher));
+  write(f.registryPath, JSON.stringify(registry));
+  passed(f.uninstall());
+  assert.equal(fs.existsSync(f.installed), false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.registryPath)), f.registry);
+});
+
+test("uninstall rejects unrelated startup commands before changing hooks or registrations", windowsOnly, (t) => {
+  const f = fixture(t);
+  passed(f.install());
+  const registered = JSON.parse(fs.readFileSync(f.registryPath));
+  const launcher = path.join(f.installed, "mchose-led.ps1");
+  const hooks = fs.readFileSync(f.hooksPath, "utf8");
+  const unexpectedCommands = [
+    `cmd.exe /c echo "${launcher}"`,
+    registered.MCHOSECodexLED + " --unexpected",
+    registered.MCHOSECodexLED.replace(`"${launcher}"`, `"${path.join(f.root, "other", "mchose-led.ps1")}"`),
+  ];
+  for (const command of unexpectedCommands) {
+    const registry = { ...registered, MCHOSECodexLED: command };
+    write(f.registryPath, JSON.stringify(registry));
+    const result = f.uninstall();
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /unexpected command/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(f.registryPath)), registry);
+    assert.equal(fs.readFileSync(f.hooksPath, "utf8"), hooks);
+    assert.equal(fs.existsSync(path.join(f.installed, "ledctl.cjs")), true);
+    assert.equal(fs.readdirSync(f.runtime).some((name) => name.startsWith("uninstalled-config-")), false);
+  }
+});

@@ -1,6 +1,6 @@
 {
   "name": "mchose-codex-led",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "description": "MCHOSE K99 V2 lighting controller and Codex status bridge",
   "main": "ledctl.cjs",

@@ -50,18 +50,38 @@ while ($runtimeAncestor) {
     }
     $runtimeAncestor = Split-Path -Parent $runtimeAncestor
 }
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$registered = Get-ItemProperty -LiteralPath $runKey -Name 'MCHOSECodexLED' -ErrorAction SilentlyContinue
+if ($registered) {
+    # Match the full command we install, rather than accepting any command that
+    # happens to mention our launcher. Resolve both existing files identically:
+    # GetFullPath alone does not expand every 8.3 alias on all Windows runtimes.
+    $commandPattern = '\Apowershell\.exe\s+-NoProfile\s+-NonInteractive\s+-ExecutionPolicy\s+Bypass\s+-WindowStyle\s+Hidden\s+-File\s+"(?<launcher>[^"\r\n]+)"\s+autostart\z'
+    $commandMatch = [regex]::Match([string]$registered.MCHOSECodexLED, $commandPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    $startupOwned = $false
+    if ($commandMatch.Success) {
+        try {
+            $registeredLauncher = [System.IO.Path]::GetFullPath($commandMatch.Groups['launcher'].Value)
+            $launcher = [System.IO.Path]::GetFullPath((Join-Path $installDirectory 'mchose-led.ps1'))
+            $resolvedLaunchers = ((& $nodeRuntime -e "const fs = require('node:fs'); process.stdout.write(JSON.stringify(process.argv.slice(1).map(value => fs.realpathSync.native(value))));" $registeredLauncher $launcher) | Out-String) | ConvertFrom-Json
+            if ($LASTEXITCODE -eq 0 -and $resolvedLaunchers.Count -eq 2) {
+                $startupOwned = ([string]$resolvedLaunchers[0]).Equals([string]$resolvedLaunchers[1], [System.StringComparison]::OrdinalIgnoreCase)
+            }
+        }
+        catch {
+            $startupOwned = $false
+        }
+    }
+    if (-not $startupOwned) {
+        throw 'The startup entry points to an unexpected command; program files and hooks have been retained.'
+    }
+}
 New-Item -ItemType Directory -Force -Path $resolvedRuntime | Out-Null
 $backupPath = Join-Path $resolvedRuntime ('uninstalled-config-' + [guid]::NewGuid().ToString('N') + '.json')
 Copy-Item -LiteralPath $configPath -Destination $backupPath
 & $nodeRuntime (Join-Path $installDirectory 'install-hooks.cjs') --remove
 if ($LASTEXITCODE -ne 0) { throw 'Hook removal failed; program files have been retained.' }
-$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$registered = Get-ItemProperty -LiteralPath $runKey -Name 'MCHOSECodexLED' -ErrorAction SilentlyContinue
 if ($registered) {
-    $launcher = Join-Path $installDirectory 'mchose-led.ps1'
-    if (-not ([string]$registered.MCHOSECodexLED).Contains('"' + $launcher + '"')) {
-        throw 'The startup entry points to an unexpected command; program files have been retained.'
-    }
     Remove-ItemProperty -LiteralPath $runKey -Name 'MCHOSECodexLED'
 }
 # The absolute target was validated above; recovery data resides outside this tree.

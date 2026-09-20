@@ -2,7 +2,7 @@
 
 Turn your MCHOSE keyboard RGB into a real-time Codex status indicator, with automatic Windows startup, HID reconnect recovery, and customizable lighting states.
 
-**v1.6.0** · Windows 键盘 RGB 控制器。已验证的设备范围为 Windows x64、有线 USB 的 `BY Tech / MCHOSE K99 V2`：VID/PID `258A:010C`、release `0x0200`、`FF00:1`、interface 1、Col06。其他型号、无线模式和系统尚未验证。
+**v1.6.1** · Windows 键盘 RGB 控制器。已验证的设备范围为 Windows x64、有线 USB 的 `BY Tech / MCHOSE K99 V2`：VID/PID `258A:010C`、release `0x0200`、`FF00:1`、interface 1、Col06。其他型号、无线模式和系统尚未验证。
 
 | 灯光 | 含义 |
 |---|---|
@@ -11,7 +11,7 @@ Turn your MCHOSE keyboard RGB into a real-time Codex status indicator, with auto
 | 绿色 `#00FF00` | 成功，持续 2.5 秒 |
 | 红色 `#FF0000` | 失败、中断或取消，持续 5 秒 |
 
-终态提示结束后回到空闲灯效。v1.6.0 修复恢复指针覆盖、重装误删其他 hooks、迟到事件影响新批次、重复审批漏报，以及灯光通信失败改变 CLI 退出码的问题。详见 [CHANGELOG](CHANGELOG.md)。
+终态提示结束后回到空闲灯效。1.6 系列修复恢复指针覆盖、重装误删其他 hooks、迟到事件影响新批次、重复审批漏报，以及灯光通信失败改变 CLI 退出码的问题；1.6.1 补充 Windows 短路径兼容修复。详见 [CHANGELOG](CHANGELOG.md)。
 
 ## 安装与升级
 
