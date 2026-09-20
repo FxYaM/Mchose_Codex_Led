@@ -1,0 +1,50 @@
+# Dependencies (install from vendor/package.json)
+node_modules/
+
+# Credentials and private configuration
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+.npmrc
+.netrc
+credentials.json
+auth.json
+cookies.txt
+
+# Runtime, device snapshots and machine-local state
+runtime/
+snapshots/
+state/
+cache/
+.cache/
+.codex/
+recovery/
+test-results/
+*.pid
+*.pid.*
+*.lock
+*.lock.*
+*.log
+*.log.*
+*.backup-*
+*.tmp
+*.sqlite
+*.sqlite-*
+*.db-wal
+*.db-shm
+/hooks-snippet.json
+
+# Windows, PowerShell and editor temporary files
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+ConsoleHost_history.txt
+PowerShell_transcript.*
+*.swp
+*.swo
+*~

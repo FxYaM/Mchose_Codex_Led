@@ -1,0 +1,9 @@
+{
+  "name": "mchose-led-hid-dependencies",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Install the HID dependency at the path used by the controller",
+  "dependencies": {
+    "node-hid": "3.1.2"
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "runtimeDirectory": "%LOCALAPPDATA%\\MCHOSECodexLED",
+  "device": {
+    "vendorId": 9610,
+    "productId": 268,
+    "product": "K99 V2",
+    "manufacturer": "BY Tech",
+    "release": 512,
+    "usagePage": 65280,
+    "usage": 1,
+    "interface": 1,
+    "collection": "Col06",
+    "reportId": 6
+  },
+  "states": {
+    "idle": {
+      "mode": "static",
+      "color": "#FF69B4",
+      "brightnessPercent": 75
+    },
+    "waiting": {
+      "mode": "static",
+      "color": "#FF69B4",
+      "brightnessPercent": 75
+    },
+    "running": {
+      "mode": "breathing",
+      "color": "#0060FF",
+      "brightnessPercent": 75,
+      "breathingSpeed": 4
+    },
+    "success": {
+      "mode": "static",
+      "color": "#00FF00",
+      "brightnessPercent": 75,
+      "durationMs": 2500
+    },
+    "error": {
+      "mode": "static",
+      "color": "#FF0000",
+      "brightnessPercent": 75,
+      "durationMs": 5000
+    }
+  },
+  "controller": {
+    "commandDelayMs": 60,
+    "readbackDelayMs": 180,
+    "pollIntervalMs": 250,
+    "presencePollMs": 2000,
+    "reconnectBackoffMs": [
+      500,
+      1000,
+      2000,
+      5000
+    ],
+    "staleRunningTaskMs": 21600000,
+    "staleWaitingTaskMs": 86400000,
+    "shutdownRestoreTimeoutMs": 10000,
+    "cancelAsError": true
+  },
+  "codex": {
+    "stateDatabaseWatcher": {
+      "enabled": true,
+      "codexHome": "%USERPROFILE%\\.codex",
+      "pollIntervalMs": 350,
+      "initialLookbackMs": 21600000,
+      "includeSubagents": false
+    },
+    "desktopStopFailureHeuristics": false,
+    "failurePatterns": [
+      "usage limit",
+      "quota",
+      "rate limit",
+      "额度",
+      "用量限制"
+    ],
+    "codexExecutable": "auto"
+  }
+}
