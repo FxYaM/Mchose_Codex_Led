@@ -1,13 +1,17 @@
 "use strict";
 
 const crypto = require("node:crypto");
-const path = require("node:path");
 const { appendLog, loadConfig, readControllerEnabled, serializeError } = require("./lib/common.cjs");
 const { ensureDaemon, sendIpc } = require("./lib/ipc.cjs");
 
 const packageDirectory = __dirname;
 
 function deterministicEventId(payload, kind) {
+  // An identical command can legitimately request approval twice in one turn.
+  // Without an invocation ID, content is a correlation hint, not an event ID.
+  if (["turn_waiting", "turn_resumed"].includes(kind) && !payload.tool_use_id) {
+    return `hook-${crypto.randomUUID()}`;
+  }
   const material = JSON.stringify({
     kind,
     sessionId: payload.session_id,
@@ -20,12 +24,27 @@ function deterministicEventId(payload, kind) {
   return `hook-${crypto.createHash("sha256").update(material).digest("hex").slice(0, 24)}`;
 }
 
+function toolCorrelationKey(payload) {
+  if (!payload.tool_name) return null;
+  const canonical = (value) => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+    }
+    return value;
+  };
+  const material = JSON.stringify([payload.tool_name, canonical(payload.tool_input ?? null)]);
+  return crypto.createHash("sha256").update(material).digest("hex");
+}
+
 function mapHook(payload, config) {
   const base = {
     source: "codex-hook",
     sessionId: payload.session_id || null,
     turnId: payload.turn_id || null,
     hookEventName: payload.hook_event_name,
+    toolUseId: payload.tool_use_id || null,
+    toolKey: toolCorrelationKey(payload),
   };
   let kind;
   switch (payload.hook_event_name) {

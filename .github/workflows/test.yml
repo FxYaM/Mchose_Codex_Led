@@ -1,0 +1,27 @@
+name: Windows checks
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: vendor/package-lock.json
+      - run: npm.cmd --prefix vendor ci
+      - run: npm.cmd run check
+      - run: npm.cmd test
+      - name: Check native dependency without opening a device
+        run: node -e 'require("./vendor/node_modules/node-hid")'

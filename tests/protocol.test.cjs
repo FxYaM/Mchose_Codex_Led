@@ -1,10 +1,10 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const { brightnessPercentToLevel, loadConfig } = require("../lib/common.cjs");
+const { createK99State } = require("./fixtures/k99-state.cjs");
 const {
   COMMANDS,
   DeviceOfflineError,
@@ -20,18 +20,10 @@ const {
 } = require("../lib/protocol.cjs");
 
 const packageDirectory = path.resolve(__dirname, "..");
-const baselineDirectory = path.join(
-  packageDirectory,
-  "snapshots",
-  "legacy-baseline-k99v2-258a-010c-20260913T142853+0800",
-);
-const baseline = {
-  performance: fs.readFileSync(path.join(baselineDirectory, "performance.bin")),
-  lightColor: fs.readFileSync(path.join(baselineDirectory, "light-color.bin")),
-};
+const baseline = createK99State();
 const config = loadConfig(packageDirectory);
 
-test("legacy responses have the exact K99 V2 headers and markers", () => {
+test("synthetic responses satisfy the documented K99 V2 headers and markers", () => {
   assert.equal(validatePerformanceResponse(baseline.performance), true);
   assert.equal(validateColorResponse(baseline.lightColor), true);
   assert.equal(baseline.performance[134], 0x5a);
@@ -139,7 +131,7 @@ test("restore classifies mid-operation HID failures as offline but preserves ide
   const offlineProtocol = new K99Protocol(config.device, { packageDirectory });
   offlineProtocol.withOpened = async () => { throw new Error("device vanished during write"); };
   await assert.rejects(
-    offlineProtocol.restoreExact({ ...baseline, identity: legacyIdentity() }),
+    offlineProtocol.restoreExact(baseline),
     (error) => error instanceof DeviceOfflineError && error.code === "DEVICE_OFFLINE",
   );
 
@@ -148,11 +140,23 @@ test("restore classifies mid-operation HID failures as offline but preserves ide
     throw new IdentityMismatchError("wrong keyboard", [{ field: "endpointPath" }]);
   };
   await assert.rejects(
-    identityProtocol.restoreExact({ ...baseline, identity: legacyIdentity() }),
+    identityProtocol.restoreExact(baseline),
     (error) => error instanceof IdentityMismatchError && error.code === "IDENTITY_MISMATCH",
   );
 });
 
-function legacyIdentity() {
-  return JSON.parse(fs.readFileSync(path.join(baselineDirectory, "manifest.json"), "utf8")).device;
-}
+test("response validation rejects wrong lengths and headers before packet creation", () => {
+  assert.throws(() => validatePerformanceResponse(baseline.performance.subarray(0, 135)), /length/);
+  assert.throws(() => validateColorResponse(baseline.lightColor.subarray(0, 519)), /length/);
+  for (const [buffer, validate, build] of [
+    [baseline.performance, validatePerformanceResponse, buildPerformanceWritePacket],
+    [baseline.lightColor, validateColorResponse, buildColorWritePacket],
+  ]) {
+    for (let offset = 0; offset < 8; offset += 1) {
+      const invalid = Buffer.from(buffer);
+      invalid[offset] ^= 1;
+      assert.throws(() => validate(invalid), /unexpected byte/);
+      assert.throws(() => build(invalid, config.states.running), /unexpected byte/);
+    }
+  }
+});

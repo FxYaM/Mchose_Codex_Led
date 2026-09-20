@@ -16,16 +16,17 @@ const {
 } = require("../lib/snapshots.cjs");
 const { mapHook } = require("../hook-handler.cjs");
 const { directRestore } = require("../ledctl.cjs");
+const { TaskStateMachine } = require("../lib/state-machine.cjs");
+const { createK99State } = require("./fixtures/k99-state.cjs");
 
 const packageDirectory = path.resolve(__dirname, "..");
 const config = loadConfig(packageDirectory);
-const legacyDirectory = path.join(packageDirectory, "snapshots", "legacy-baseline-k99v2-258a-010c-20260913T142853+0800");
-const legacy = loadSnapshot(legacyDirectory);
+const fixtureState = createK99State();
 
 test("snapshot commit, pending pointer, hash validation, and clear are coherent", () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "mchose-led-test-"));
   try {
-    const snapshot = createSnapshotFromState(temporary, legacy.state, "test", ["unit test"]);
+    const snapshot = createSnapshotFromState(temporary, fixtureState, "test", ["unit test"]);
     const loaded = loadSnapshot(snapshot.directory);
     assert.equal(loaded.manifest.snapshotId, snapshot.manifest.snapshotId);
     markPendingRestore(temporary, snapshot);
@@ -45,12 +46,11 @@ test("snapshot commit, pending pointer, hash validation, and clear are coherent"
 });
 
 test("snapshot identity tolerates endpoint re-enumeration when stable identity matches", () => {
-  const moved = { ...legacy.state.identity, endpointPath: "different-port" };
-  assert.equal(compareIdentity(legacy.state.identity, moved, false).length, 0);
-  assert.equal(compareIdentity(legacy.state.identity, moved, true).length, 0);
+  const moved = { ...fixtureState.identity, endpointPath: "different-port" };
+  assert.equal(compareIdentity(fixtureState.identity, moved).length, 0);
 
   const wrongStableIdentity = { ...moved, release: moved.release + 1 };
-  assert.equal(compareIdentity(legacy.state.identity, wrongStableIdentity, false).some((entry) => entry.field === "release"), true);
+  assert.equal(compareIdentity(fixtureState.identity, wrongStableIdentity).some((entry) => entry.field === "release"), true);
 });
 
 test("hook payloads map only to documented lifecycle meanings", () => {
@@ -65,27 +65,59 @@ test("hook payloads map only to documented lifecycle meanings", () => {
   assert.equal(mapHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Bash" }, config), null);
 });
 
-test("distinct PermissionRequest payloads in one turn are not incorrectly deduplicated", () => {
+test("approval invocations without an ID are not deduplicated by command contents", () => {
   const common = { session_id: "S", turn_id: "T", hook_event_name: "PermissionRequest", tool_name: "Bash" };
   const first = mapHook({ ...common, tool_input: { command: "first" } }, config);
   const retry = mapHook({ ...common, tool_input: { command: "first" } }, config);
   const second = mapHook({ ...common, tool_input: { command: "second" } }, config);
-  assert.equal(first.eventId, retry.eventId);
+  assert.notEqual(first.eventId, retry.eventId);
   assert.notEqual(first.eventId, second.eventId);
+});
+
+test("a repeated identical approval waits again after its previous invocation completed", () => {
+  const machine = new TaskStateMachine(config);
+  const payload = { session_id: "S", turn_id: "T", tool_name: "Bash", tool_input: { command: "git status" } };
+  machine.apply(mapHook({ ...payload, hook_event_name: "PermissionRequest" }, config));
+  machine.apply(mapHook({ ...payload, hook_event_name: "PostToolUse", tool_use_id: "first" }, config));
+  assert.equal(machine.desired(), "running");
+  const repeated = machine.apply(mapHook({ ...payload, hook_event_name: "PermissionRequest" }, config));
+  assert.equal(repeated.duplicate, false);
+  assert.equal(machine.desired(), "waiting");
+});
+
+test("only the corresponding tool completion resolves a wait, including concurrent waits", () => {
+  const machine = new TaskStateMachine(config);
+  const payload = { session_id: "S", turn_id: "T", tool_name: "Bash", tool_input: { command: "first" } };
+  const apply = (hook, extra = {}) => machine.apply(mapHook({ ...payload, hook_event_name: hook, ...extra }, config));
+  apply("PermissionRequest", { tool_use_id: "A" });
+  apply("PermissionRequest", { tool_use_id: "B" });
+  apply("PostToolUse", { tool_use_id: "unrelated" });
+  assert.equal(machine.desired(), "waiting");
+  apply("PostToolUse", { tool_use_id: "A" });
+  assert.equal(machine.desired(), "waiting");
+  apply("PostToolUse", { tool_use_id: "B" });
+  assert.equal(machine.desired(), "running");
+});
+
+test("approval correlation is independent of JSON object key order", () => {
+  const payload = { session_id: "S", turn_id: "T", tool_name: "Bash" };
+  const waiting = mapHook({ ...payload, hook_event_name: "PermissionRequest", tool_input: { command: "status", cwd: "repo" } }, config);
+  const resumed = mapHook({ ...payload, hook_event_name: "PostToolUse", tool_input: { cwd: "repo", command: "status" } }, config);
+  assert.equal(waiting.toolKey, resumed.toolKey);
 });
 
 test("restoring an unrelated explicit snapshot never clears the pending recovery source", async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "mchose-led-test-"));
   try {
-    const pendingSnapshot = createSnapshotFromState(temporary, legacy.state, "takeover", ["pending"]);
-    const explicitSnapshot = createSnapshotFromState(temporary, legacy.state, "manual-baseline", ["explicit"]);
+    const pendingSnapshot = createSnapshotFromState(temporary, fixtureState, "takeover", ["pending"]);
+    const explicitSnapshot = createSnapshotFromState(temporary, fixtureState, "manual-baseline", ["explicit"]);
     markPendingRestore(temporary, pendingSnapshot);
     const fakeProtocol = {
       async restoreExact(state) {
-        assert.ok(state.performance.equals(legacy.state.performance));
+        assert.ok(state.performance.equals(fixtureState.performance));
         return {
           ok: true,
-          after: legacy.state,
+          after: fixtureState,
           performanceDifferences: [],
           colorDifferences: [],
         };
@@ -95,7 +127,7 @@ test("restoring an unrelated explicit snapshot never clears the pending recovery
       { ...config, runtimeDirectory: temporary },
       fakeProtocol,
       explicitSnapshot.directory,
-      { acceptDevice: false, watch: false },
+      { watch: false },
     );
     assert.equal(result.pendingCleared, false);
     assert.equal(result.pendingRetained, pendingSnapshot.manifest.snapshotId);
@@ -113,21 +145,21 @@ test("restoring an unrelated explicit snapshot never clears the pending recovery
 test("restore watch retries a mid-operation offline failure and keeps its recovery source", async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "mchose-led-test-"));
   try {
-    const snapshot = createSnapshotFromState(temporary, legacy.state, "takeover", ["watch retry"]);
+    const snapshot = createSnapshotFromState(temporary, fixtureState, "takeover", ["watch retry"]);
     markPendingRestore(temporary, snapshot);
     let attempts = 0;
     const fakeProtocol = {
       async restoreExact() {
         attempts += 1;
         if (attempts === 1) throw new DeviceOfflineError("unplugged mid-restore");
-        return { ok: true, after: legacy.state, performanceDifferences: [], colorDifferences: [] };
+        return { ok: true, after: fixtureState, performanceDifferences: [], colorDifferences: [] };
       },
     };
     const result = await directRestore(
       { ...config, runtimeDirectory: temporary, controller: { ...config.controller, reconnectBackoffMs: [1] } },
       fakeProtocol,
       null,
-      { acceptDevice: false, watch: true },
+      { watch: true },
     );
     assert.equal(attempts, 2);
     assert.equal(result.ok, true);

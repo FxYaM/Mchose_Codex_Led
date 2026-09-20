@@ -164,3 +164,117 @@ test("normal idle and waiting presets are explicit configured lighting, not pres
   assert.equal(config.states.waiting.mode, "static");
   assert.equal(config.states.waiting.color, "#FF69B4");
 });
+
+test("a delayed failure from a completed batch cannot contaminate the next batch", () => {
+  const machine = new TaskStateMachine(config);
+  machine.apply(event("turn_started", "old", "b1"), 1000);
+  machine.apply(event("turn_completed", "old", "b2"), 1001);
+  machine.apply(event("turn_started", "new", "b3"), 1002);
+  machine.apply(event("turn_failed", "old", "b4"), 1003);
+  assert.equal(machine.terminalTasks.get("old").outcome, "error");
+  machine.apply(event("turn_completed", "new", "b5"), 1004);
+  assert.equal(machine.desired(1004), "success");
+  assert.equal(machine.batch, null);
+});
+
+test("a delayed failure cannot replace a newer batch's terminal indication", () => {
+  const machine = new TaskStateMachine(config);
+  machine.apply(event("turn_started", "old", "c1"), 1000);
+  machine.apply(event("turn_completed", "old", "c2"), 1001);
+  machine.apply(event("turn_started", "new", "c3"), 1002);
+  machine.apply(event("turn_completed", "new", "c4"), 1003);
+  const currentTransient = { ...machine.transient };
+  machine.apply(event("turn_failed", "old", "c5"), 1004);
+  assert.deepEqual(machine.transient, currentTransient);
+  assert.equal(machine.desired(1004), "success");
+});
+
+test("a failure correction still affects another active task in its original batch", () => {
+  const machine = new TaskStateMachine(config);
+  machine.apply(event("turn_started", "A", "same1"), 1000);
+  machine.apply(event("turn_started", "B", "same2"), 1001);
+  machine.apply(event("turn_completed", "A", "same3"), 1002);
+  machine.apply(event("turn_failed", "A", "same4"), 1003);
+  machine.apply(event("turn_completed", "B", "same5"), 1004);
+  assert.equal(machine.desired(1004), "error");
+});
+
+test("a watcher start cannot clear an explicit hook wait, including after serialization", () => {
+  const machine = new TaskStateMachine(config);
+  machine.apply({ ...event("turn_waiting", "A", "wait1"), source: "codex-hook", toolUseId: "request-1" }, 1000);
+  const restored = new TaskStateMachine(config, machine.serialize());
+  restored.apply({ ...event("turn_started", "A", "watch1"), source: "codex-local-state" }, 1001);
+  assert.equal(restored.desired(1001), "waiting");
+  assert.equal(restored.tasks.get("A").pendingWaits[0].toolUseId, "request-1");
+  restored.apply({ ...event("turn_resumed", "A", "resume1"), source: "codex-hook", toolUseId: "request-1" }, 1002);
+  assert.equal(restored.desired(1002), "running");
+});
+
+test("a delayed failure upgrades the latest batch after its success indication expires and state is reloaded", () => {
+  const machine = new TaskStateMachine(config);
+  machine.apply(event("turn_started", "A", "expired1"), 1000);
+  machine.apply(event("turn_completed", "A", "expired2"), 1001);
+  const delayedAt = 1001 + config.states.success.durationMs + 1000;
+  machine.tick(delayedAt);
+  assert.equal(machine.desired(delayedAt), "idle");
+  assert.equal(machine.transient, null);
+  const restored = new TaskStateMachine(config, JSON.parse(JSON.stringify(machine.serialize())));
+  restored.apply(event("turn_failed", "A", "expired3"), delayedAt + 1);
+  assert.equal(restored.desired(delayedAt + 1), "error");
+  assert.equal(restored.transient.expiresAt, delayedAt + 1 + config.states.error.durationMs);
+});
+
+test("a terminal-only observed turn retains its batch identity for later authoritative failure", () => {
+  const machine = new TaskStateMachine(config);
+  machine.apply(event("turn_completed", "A", "terminal-only1"), 1000);
+  const delayedAt = 1000 + config.states.success.durationMs + 1000;
+  machine.tick(delayedAt);
+  machine.apply(event("turn_failed", "A", "terminal-only2"), delayedAt + 1);
+  assert.equal(machine.desired(delayedAt + 1), "error");
+});
+
+test("an old failure stays silent after a newer completed batch also expires", () => {
+  const machine = new TaskStateMachine(config);
+  machine.apply(event("turn_completed", "old", "expired-new1"), 1000);
+  machine.apply(event("turn_started", "new", "expired-new2"), 1001);
+  machine.apply(event("turn_completed", "new", "expired-new3"), 1002);
+  const delayedAt = 1002 + config.states.success.durationMs + 1000;
+  machine.tick(delayedAt);
+  const restored = new TaskStateMachine(config, machine.serialize());
+  restored.apply(event("turn_failed", "old", "expired-new4"), delayedAt + 1);
+  assert.equal(restored.desired(delayedAt + 1), "idle");
+  assert.equal(restored.transient, null);
+});
+
+test("an authoritative failure correction preserves an explicit manual override", () => {
+  const machine = new TaskStateMachine(config);
+  machine.apply(event("turn_completed", "A", "override1"), 1000);
+  machine.apply({ kind: "manual_state", state: "waiting", eventId: "override2" }, 1001);
+  machine.apply(event("turn_failed", "A", "override3"), 1002);
+  assert.equal(machine.desired(1002), "waiting");
+  assert.equal(machine.terminalTasks.get("A").outcome, "error");
+});
+
+test("legacy persisted waits can resume while new correlated waits retain strict matching", () => {
+  const legacy = new TaskStateMachine(config, {
+    tasks: { A: { key: "A", phase: "waiting", source: "codex-hook", startedAt: 1000, updatedAt: 1000 } },
+    batch: { id: "legacy-batch", startedAt: 1000, outcome: null },
+  });
+  legacy.apply({ ...event("turn_resumed", "A", "legacy-resume"), source: "codex-hook", toolUseId: "next-tool" }, 1001);
+  assert.equal(legacy.desired(1001), "running");
+  legacy.apply({ ...event("turn_waiting", "A", "new-wait"), source: "codex-hook", toolUseId: "pending-tool" }, 1002);
+  legacy.apply({ ...event("turn_resumed", "A", "unrelated-resume"), source: "codex-hook", toolUseId: "unrelated-tool" }, 1003);
+  assert.equal(legacy.desired(1003), "waiting");
+  legacy.apply({ ...event("turn_resumed", "A", "matched-resume"), source: "codex-hook", toolUseId: "pending-tool" }, 1004);
+  assert.equal(legacy.desired(1004), "running");
+});
+
+test("an interruption without an error indication still establishes the newest batch", () => {
+  const machine = new TaskStateMachine({ ...config, controller: { ...config.controller, cancelAsError: false } });
+  machine.apply(event("turn_completed", "old", "quiet1"), 1000);
+  machine.apply(event("turn_interrupted", "new", "quiet2"), 1001);
+  machine.apply(event("turn_failed", "old", "quiet3"), 1002);
+  assert.equal(machine.desired(1002), "idle");
+  machine.apply(event("turn_failed", "new", "quiet4"), 1003);
+  assert.equal(machine.desired(1003), "error");
+});

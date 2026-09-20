@@ -2,14 +2,16 @@ $ErrorActionPreference = 'Stop'
 
 $installDirectory = Join-Path $env:USERPROFILE '.codex\mchose-led'
 $runtimeDirectory = Join-Path $env:LOCALAPPDATA 'MCHOSECodexLED'
-$nodeCandidates = @(
-    (Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'),
-    (Join-Path $env:ProgramFiles 'nodejs\node.exe')
-)
-$pathNode = Get-Command node.exe -ErrorAction SilentlyContinue
-if ($pathNode) { $nodeCandidates += $pathNode.Source }
-$nodeRuntime = $nodeCandidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
-if (-not $nodeRuntime) { throw 'Node.js 18+ was not found.' }
+. (Join-Path $PSScriptRoot 'node-runtime.ps1')
+$nodeRuntime = Get-MchoseNodeRuntime
+$sourceDirectory = [System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
+$targetDirectory = [System.IO.Path]::GetFullPath($installDirectory).TrimEnd('\')
+if ($sourceDirectory.Equals($targetDirectory, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Run install.ps1 from a separate source checkout, not from the installed directory.'
+}
+# Validate the native dependency before stopping or replacing a working installation.
+& $nodeRuntime -e 'require(process.argv[1]);' (Join-Path $PSScriptRoot 'vendor\node_modules\node-hid')
+if ($LASTEXITCODE -ne 0) { throw 'The HID dependency is unavailable. Run npm.cmd --prefix vendor ci first.' }
 
 $installedController = Join-Path $installDirectory 'ledctl.cjs'
 $installedConfig = Join-Path $installDirectory 'config.json'
@@ -44,14 +46,23 @@ if (Test-Path -LiteralPath $installedController) {
 }
 
 New-Item -ItemType Directory -Force -Path $installDirectory | Out-Null
-Get-ChildItem -LiteralPath $PSScriptRoot | ForEach-Object {
+$runtimeFiles = @(
+    'config.json', 'package.json', 'ledctl.cjs', 'hook-handler.cjs', 'codex-exec-led.cjs',
+    'install-hooks.cjs', 'mchose-led.ps1', 'mchose-led-exec.ps1', 'node-runtime.ps1', 'uninstall.ps1', 'lib'
+)
+$runtimeFiles | ForEach-Object {
     # A reinstall is an application update, not a configuration reset.
-    if ($_.Name -eq 'config.json' -and (Test-Path -LiteralPath $installedConfig)) {
+    if ($_ -eq 'config.json' -and (Test-Path -LiteralPath $installedConfig)) {
         Write-Host "Preserved existing configuration at $installedConfig"
     }
     else {
-        Copy-Item -LiteralPath $_.FullName -Destination $installDirectory -Recurse -Force
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $_) -Destination $installDirectory -Recurse -Force
     }
+}
+$installedVendor = Join-Path $installDirectory 'vendor'
+New-Item -ItemType Directory -Force -Path $installedVendor | Out-Null
+foreach ($vendorFile in @('package.json', 'package-lock.json', 'node_modules')) {
+    Copy-Item -LiteralPath (Join-Path (Join-Path $PSScriptRoot 'vendor') $vendorFile) -Destination $installedVendor -Recurse -Force
 }
 
 # v1.2 migration: older builds used mode=preserve for idle/waiting. That

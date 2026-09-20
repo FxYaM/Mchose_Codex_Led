@@ -71,7 +71,7 @@ Usage:
   mchose-led.ps1 read
   mchose-led.ps1 snapshot [--kind manual-baseline]
   mchose-led.ps1 snapshots
-  mchose-led.ps1 restore [--snapshot <directory-or-id>] [--accept-device] [--watch]
+  mchose-led.ps1 restore [--snapshot <directory-or-id>] [--watch]
   mchose-led.ps1 device-test [--duration-ms 5000]
   mchose-led.ps1 codex-info
   mchose-led.ps1 diagnose
@@ -136,7 +136,6 @@ async function directRestore(config, protocol, selector, options) {
     for (;;) {
       try {
         const result = await protocol.restoreExact(snapshot.state, {
-          acceptDevice: options.acceptDevice,
           commandDelayMs: config.controller.commandDelayMs,
           readbackDelayMs: config.controller.readbackDelayMs,
         });
@@ -176,6 +175,13 @@ async function directRestore(config, protocol, selector, options) {
 
 async function deviceTest(config, protocol, durationMs) {
   return withHidOperationLock(config.runtimeDirectory, "device-test", async () => {
+    const pending = readPendingRestore(config.runtimeDirectory);
+    if (pending) {
+      const error = new Error("A keyboard restore is still pending; run restore before device-test");
+      error.code = "PENDING_RESTORE";
+      error.details = { snapshotId: pending.snapshotId };
+      throw error;
+    }
     const resultsDirectory = ensureDirectory(path.join(config.runtimeDirectory, "test-results"));
     const resultPath = path.join(resultsDirectory, `device-test-${isoFileTimestamp()}-${crypto.randomBytes(3).toString("hex")}.json`);
     const result = {
@@ -408,7 +414,9 @@ async function main() {
       break;
     case "restore": {
       const selector = takeOption(args, "--snapshot");
-      const acceptDevice = takeFlag(args, "--accept-device");
+      if (takeFlag(args, "--accept-device")) {
+        throw new Error("--accept-device is no longer supported; stable keyboard identity must match the snapshot");
+      }
       const watch = takeFlag(args, "--watch");
       writeControllerEnabled(config.runtimeDirectory, false, "restore command requires exclusive HID access");
       const pendingBeforeStop = readPendingRestore(config.runtimeDirectory);
@@ -419,7 +427,7 @@ async function main() {
         print({ ok: true, snapshot: pendingBeforeStop.snapshotId, restoredByDaemonShutdown: true });
         break;
       }
-      const restored = await directRestore(config, protocol, selector, { acceptDevice, watch });
+      const restored = await directRestore(config, protocol, selector, { watch });
       print(restored);
       if (!restored.ok) process.exitCode = 4;
       break;
